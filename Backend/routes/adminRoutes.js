@@ -13,4 +13,4 @@ router.post('/stores', adminController.addStore);
 router.get('/stores', adminController.listStores);
 router.get('/store-owners', adminController.listStoreOwners);
 
-module.exports = router;
+module.exports = router; 
