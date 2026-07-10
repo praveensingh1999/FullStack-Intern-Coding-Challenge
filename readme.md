@@ -375,3 +375,104 @@ unique constraint: (userId, storeId)
 | GET | /user/stores | Normal User | Browse/search stores + own rating |
 | POST | /user/ratings | Normal User | Submit or update a rating |
 | GET | /store-owner/dashboard | Store Owner | Own store's raters + average |
+
+
+# Store Rating Platform
+
+Full-stack web app where Normal Users rate Stores (1-5), Store Owners see feedback on
+their store, and a System Administrator manages the whole platform. Single login,
+role-based access.
+
+## Tech Stack
+- **Backend:** Express.js + Sequelize (MySQL)
+- **Frontend:** React (Vite) + React Router + Axios
+- **Auth:** JWT, bcrypt password hashing
+
+## Project Structure
+```
+store-rating-app/
+  backend/     Express API, Sequelize models, JWT auth
+  frontend/    React app (Vite)
+```
+
+## Database Schema
+
+**users**
+| column     | type                                  | notes                          |
+|------------|---------------------------------------|---------------------------------|
+| id         | serial PK                             |                                  |
+| name       | varchar(60)                           | 20–60 chars                     |
+| email      | varchar(255) unique                   |                                  |
+| password   | varchar (bcrypt hash)                 |                                  |
+| address    | varchar(400)                          |                                  |
+| role       | enum: ADMIN, NORMAL_USER, STORE_OWNER |                                  |
+
+**stores**
+| column    | type          | notes                              |
+|-----------|---------------|-------------------------------------|
+| id        | serial PK     |                                      |
+| name      | varchar(60)   |                                      |
+| email     | varchar(255)  | unique                              |
+| address   | varchar(400)  |                                      |
+| owner_id  | FK -> users.id| nullable, must reference STORE_OWNER|
+
+**ratings**
+| column    | type      | notes                                |
+|-----------|-----------|----------------------------------------|
+| id        | serial PK |                                        |
+| user_id   | FK -> users.id  |                                  |
+| store_id  | FK -> stores.id |                                  |
+| value     | integer   | 1–5, unique per (user_id, store_id)   |
+
+A unique index on `(user_id, store_id)` in `ratings` is what allows "submit vs. modify"
+rating to be a single upsert operation, and is the cleanest way to guarantee one rating
+per user per store at the database level.
+
+## Setup
+
+### 1. Database
+Create a MySQL database:
+```sql
+CREATE DATABASE store_ratings;
+```
+
+### 2. Backend
+```bash
+cd backend
+cp .env.example .env
+# edit .env with your DB credentials and a real JWT_SECRET
+npm install
+npm run seed     # creates the first Admin account (from .env values)
+npm run dev       # starts on http://localhost:5000
+```
+
+### 3. Frontend
+```bash
+cd frontend
+npm install
+npm run dev       # starts on http://localhost:3000, proxies /api to :5000
+```
+
+Log in with the seeded admin credentials (see `.env`), or sign up as a Normal User at
+`/signup`. Admins can create Store Owner accounts and stores from the Admin panel.
+
+## Key Design Decisions
+- **Single users table with a `role` enum** rather than three separate tables — all
+  three roles share the same auth flow (email/password + JWT), so one table with a
+  role discriminator avoids duplicated login logic while `role` middleware still
+  enforces per-endpoint access control.
+- **One store per owner** (`stores.owner_id`) keeps the Store Owner dashboard query
+  trivial; this matches the spec, which doesn't describe owners managing multiple
+  stores.
+- **Rating is an upsert** (`findOrCreate` + update) enforced by a DB-level unique
+  constraint on `(user_id, store_id)`, so "submit a rating" and "modify a rating" are
+  the same API call and can never be duplicated even under a race condition.
+- **All list endpoints accept `name`, `email`, `address`, `sortBy`, `sortOrder`
+  query params** and use partial matching (`LIKE`), satisfying the filtering and
+  sorting requirement uniformly across Users and Stores. MySQL's default collation
+  (`utf8mb4_general_ci` / `utf8mb4_0900_ai_ci`) makes `LIKE` case-insensitive already,
+  so behavior matches what you'd get from Postgres's `ILIKE`.
+- **Validation lives in one shared `utils/validators.js`** on the backend (name 20–60,
+  address ≤400, password 8–16 with uppercase + special char, standard email) and is
+  mirrored on the frontend for instant feedback, but the backend is the source of
+  truth — it re-validates and rejects even if the frontend is bypassed.
